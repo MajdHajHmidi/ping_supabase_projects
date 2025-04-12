@@ -1,0 +1,74 @@
+name: Cycle Discounts on Product Categories Supabase Ecommerce Project
+
+on:
+  schedule:
+    - cron: '0 9 */10 * *' # Runs every 10 days at 09:00 UTC
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  update-discounts:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+
+      - name: Install Supabase Client
+        run: npm install @supabase/supabase-js --force
+
+      - name: Rotate Discounts
+        env:
+          SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL_1 }}
+          SUPABASE_KEY: ${{ secrets.NEXT_SERVICE_ROLE_KEY_1 }}
+        run: |
+          node -e "
+          (async () => {
+            const { createClient } = require('@supabase/supabase-js');
+            const supabase = createClient(process.env.SUPABASE_URL, process.env.SUPABASE_KEY);
+
+            const categoryCycle = ['Living Room', 'Dining', 'Bedroom', 'Outdoor', 'Bathroom'];
+            const discountOptions = [10, 20, 30, 40, 50, 60, 70];
+
+            // Fetch current discount category
+            const { data: current, error: fetchError } = await supabase
+              .from('product_categories')
+              .select('name')
+              .not('discount', 'is', null)
+              .order('discount_end_date', { ascending: false })
+              .limit(1);
+
+            if (fetchError) throw fetchError;
+
+            const lastCategory = current?.[0]?.name;
+            const nextIndex = (lastCategory ? categoryCycle.indexOf(lastCategory) + 1 : 0) % categoryCycle.length;
+            const nextCategory = categoryCycle[nextIndex];
+
+            const randomDiscount = discountOptions[Math.floor(Math.random() * discountOptions.length)];
+            const endDate = new Date();
+            endDate.setDate(endDate.getDate() + 10);
+            const formattedDate = endDate.toISOString();
+
+            // Reset all discounts first
+            const { error: resetError } = await supabase
+              .from('product_categories')
+              .update({ discount: null, discount_end_date: null })
+              .not('name', 'eq', nextCategory);
+
+            if (resetError) throw resetError;
+
+            // Update the next category with new discount
+            const { error: updateError } = await supabase
+              .from('product_categories')
+              .update({ discount: randomDiscount, discount_end_date: formattedDate })
+              .eq('name', nextCategory);
+
+            if (updateError) throw updateError;
+
+            console.log(\`Discount of \${randomDiscount}% applied to "\${nextCategory}" until \${formattedDate}.\`);
+          })();
+          "
